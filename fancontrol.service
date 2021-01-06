@@ -1,0 +1,16 @@
+[Unit]
+Description=FanControl
+After=network.target
+
+[Service]
+User=pi
+Group=pi
+WorkingDirectory=/usr/local/bin
+#Environment=
+ExecStart=/usr/local/bin/fancontrol.py
+ExecStop=kill
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
