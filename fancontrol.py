@@ -7,8 +7,10 @@ import os
 import signal
 import json
 import time
+import bottleneck as bn
+import numpy as np
 import paho.mqtt.client as mqtt
-from gpiozero import OutputDevice
+#from gpiozero import OutputDevice
 datafile = '/etc/fancontrol.conf'
 pidfile = '/tmp/fancontrol.pid'
 
@@ -26,6 +28,9 @@ def get_json_param():
         return json.loads(str(data))
     except (IndexError, ValueError,) as e:
         raise RuntimeError('Could not parse the param file') from e
+
+def rollavg_bottlneck(a,n):
+    return bn.move_mean(a, window=n,min_count = None)
 
 def mqttConnect(obj):
     #def on_connect(client, userdata, flags, rc):
@@ -57,7 +62,7 @@ def on_connect(client, userdata, flags, rc):
 def on_publish(client, userdata, mid):
     if rc != false:
         print("mid_last: "+str(mid))
-        print("disconnected") 
+        print("disconnected")
         handle_killpid
     else:
         print("mid: "+str(mid))
@@ -82,34 +87,56 @@ if __name__ == '__main__':
 
     obj = get_json_param()
     print(obj['clientID'] + ' fancontrol started')
+    i= 0
+    x = np.zeros( obj['MOBILE_AVG'])
+    tValue = get_temperature()
+    while i < ( obj['MOBILE_AVG'] - 1):
+        x[i] = tValue
+        i = i+1
 
     topicmsg = obj['topicClass'] +"/"+ obj['clientID'] +"/"+  obj['tdata']
-    topicFanStatus = obj['topicClass'] +"/"+ obj['clientID'] +"/"+  obj['fanstatus']
-    nodeStatus = obj['topicClass'] +"/"+ obj['clientID'] +"/"+  obj['nodestatus']
+    topicFanStatus = obj['topicClass'] +"/"+ obj['clientID'] +"/"+  obj['fanstat    us']
+    nodeStatus = obj['topicClass'] +"/"+ obj['clientID'] +"/"+  obj['nodestatus'    ]
 
     # Validate the on and off thresholds
     if obj['OFF_THRESHOLD'] >= obj['ON_THRESHOLD']:
         raise RuntimeError('OFF_THRESHOLD must be less than ON_THRESHOLD')
 
-    fan = OutputDevice(obj['GPIO_PIN'] )
-
+    #fan = OutputDevice(obj['GPIO_PIN'] )
+    fan = 0
     client = mqttConnect(obj)
 
     temp_old = 0
     mid=0
 
     while True:
-        temp = get_temperature()
+
+        x[i] = get_temperature()
+#        print(i,x[i])
+
+        if i < ( obj['MOBILE_AVG'] - 1):
+          i = i+1
+        else:  i= 0
+
+#        print (x)
+
+        tempS = rollavg_bottlneck(x, obj['MOBILE_AVG'])
+        temp = round(tempS[(obj['MOBILE_AVG'] -1)],1)
+
 
         # Start the fan if the temperature has reached the limit and the fan
         # isn't already running.
         # NOTE: `fan.value` returns 1 for "on" and 0 for "off"
-        if temp > obj['ON_THRESHOLD'] and not fan.value:
-            fan.on()
+        #if temp > obj['ON_THRESHOLD'] and not fan.value:
+        if temp > obj['ON_THRESHOLD'] and not fan:
+            #fan.on()
+            fan=1
             (rc, mid) = client.publish(topicmsg, temp, qos=1)
             (rc, mid) = client.publish(topicFanStatus, "ON", qos=1)
-        elif fan.value and temp < obj['OFF_THRESHOLD']:
-            fan.off()
+        #elif fan.value and temp < obj['OFF_THRESHOLD']:
+        elif fan        and temp < obj['OFF_THRESHOLD']:
+            #fan.off()
+            fan = 0
             (rc, mid) = client.publish(topicmsg, temp, qos=1)
             (rc, mid) = client.publish(topicFanStatus, "OFF", qos=1)
         elif temp != temp_old:
